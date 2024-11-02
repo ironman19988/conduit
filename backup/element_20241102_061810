@@ -1,0 +1,25 @@
+server {
+    server_name chat.go.cavenx.com;
+
+    root /var/www/element;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header X-Frame-Options SAMEORIGIN;
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+        add_header Content-Security-Policy "frame-ancestors 'self'";
+    }
+
+    location ~* \.(?:ico|css|js|gif|jpe?g|png|woff|woffsvg|eot|ttf)$ {
+        expires 30d;
+        add_header Pragma public;
+        add_header Cache-Control "public";
+    }
+
+    listen 443 ssl; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/chat.go.cavenx.com/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/chat.go.cavenx.com/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+}

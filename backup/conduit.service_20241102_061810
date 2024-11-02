@@ -1,0 +1,16 @@
+[Unit]
+Description=Conduit Matrix Server
+After=network.target
+
+[Service]
+Environment="CONDUIT_CONFIG=/etc/matrix-conduit/conduit.toml"
+Environment="RUST_BACKTRACE=1"
+Environment="RUST_LOG=debug"
+ExecStart=/home/ubuntu/conduit/target/release/conduit
+User=ubuntu
+Group=ubuntu
+Restart=always
+WorkingDirectory=/home/ubuntu/conduit
+
+[Install]
+WantedBy=multi-user.target

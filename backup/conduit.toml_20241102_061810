@@ -1,0 +1,5 @@
+[voice_video]
+provider = "livekit"
+livekit_url = "wss://livekit.cavenx.com/ws"
+livekit_key = "APIozaLMj8pYJjd"
+livekit_secret = "edvCAYtHeT2i0f5gxY19fGeuGw5fXerH8AqCxGmveH9V"

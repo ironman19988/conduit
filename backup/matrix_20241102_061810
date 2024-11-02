@@ -1,0 +1,41 @@
+server {
+    server_name go.cavenx.com;
+
+    location /.well-known/matrix/server {
+        default_type application/json;
+        return 200 '{"m.server": "go.cavenx.com:443"}';
+    }
+
+    location /.well-known/matrix/client {
+        default_type application/json;
+        add_header Access-Control-Allow-Origin *;
+        return 200 '{"m.homeserver": {"base_url": "https://go.cavenx.com"}}';
+    }
+
+    location ~ ^(/_matrix|/_synapse/client) {
+        proxy_pass http://localhost:6167;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        client_max_body_size 50M;
+        proxy_http_version 1.1;
+    }
+
+    listen 443 ssl; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/go.cavenx.com/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/go.cavenx.com/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
+}
+
+server {
+    if ($host = go.cavenx.com) {
+        return 301 https://$host$request_uri;
+    } # managed by Certbot
+
+    listen 80;
+    server_name go.cavenx.com;
+    return 404; # managed by Certbot
+}

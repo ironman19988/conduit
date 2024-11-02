@@ -1,0 +1,239 @@
+#!/bin/bash
+
+# Matrix Conduit + Element Web Setup Documentation and Commands
+# Server: 172.31.43.73
+# URLs: 
+# - chat.go.cavenx.com (Element Web)
+# - go.cavenx.com (Matrix/Conduit)
+# LiveKit Server: 172.31.12.121 (livekit.cavenx.com)
+
+echo "This script contains setup instructions and configurations for Matrix Conduit and Element Web"
+
+# System Update
+apt update && apt upgrade -y
+
+# Install Required Packages
+apt install -y nginx certbot python3-certbot-nginx
+
+# ===============================
+# Conduit Installation
+# ===============================
+# Install Rust and cargo
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+# Clone and Build Conduit
+cd /home/ubuntu
+git clone https://gitlab.com/famedly/conduit.git
+cd conduit
+cargo build --release
+
+# Create Conduit Service
+cat > /etc/systemd/system/conduit.service << 'EOL'
+[Unit]
+Description=Conduit Matrix Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/conduit
+ExecStart=/home/ubuntu/conduit/target/release/conduit
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
+EOL
+
+# Create Conduit Config
+cat > /home/ubuntu/conduit/conduit.toml << 'EOL'
+[voice_video]
+provider = "livekit"
+livekit_url = "wss://livekit.cavenx.com/ws"
+livekit_key = "APIozaLMj8pYJjd"
+livekit_secret = "edvCAYtHeT2i0f5gxY19fGeuGw5fXerH8AqCxGmveH9V"
+EOL
+
+# ===============================
+# Element Web Installation
+# ===============================
+# Download and Extract Element Web
+cd /var/www
+wget https://github.com/vector-im/element-web/releases/latest/download/element-web.tar.gz
+tar -xzf element-web.tar.gz
+mv element-web element
+rm element-web.tar.gz
+
+# Create Element Web Config
+cat > /var/www/element/config.json << 'EOL'
+{
+    "default_server_config": {
+        "m.homeserver": {
+            "base_url": "https://go.cavenx.com",
+            "server_name": "go.cavenx.com"
+        },
+        "m.identity_server": {
+            "base_url": "https://vector.im"
+        }
+    },
+    "disable_custom_urls": true,
+    "disable_guests": true,
+    "brand": "Element",
+    "integrations_ui_url": "",
+    "integrations_rest_url": "",
+    "bug_report_endpoint_url": "",
+    "defaultCountryCode": "US",
+    "showLabsSettings": false,
+    "features": {
+        "feature_video_rooms": true,
+        "feature_group_calls": true
+    },
+    "default_theme": "light",
+    "element_call": {
+        "url": "https://livekit.cavenx.com",
+        "participant_limit": 20,
+        "brand": "Element Call"
+    },
+    "livekit": {
+        "enabled": true,
+        "server_url": "wss://livekit.cavenx.com"
+    }
+}
+EOL
+
+# ===============================
+# Nginx Configurations
+# ===============================
+# Element Web Nginx Config
+cat > /etc/nginx/sites-available/element << 'EOL'
+server {
+    server_name chat.go.cavenx.com;
+
+    root /var/www/element;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header X-Frame-Options SAMEORIGIN;
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+        add_header Content-Security-Policy "frame-ancestors 'self'";
+    }
+
+    location ~* \.(?:ico|css|js|gif|jpe?g|png|woff|woff2|svg|eot|ttf)$ {
+        expires 30d;
+        add_header Pragma public;
+        add_header Cache-Control "public";
+    }
+
+    listen 443 ssl;
+    ssl_certificate /etc/letsencrypt/live/chat.go.cavenx.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/chat.go.cavenx.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+}
+EOL
+
+# Matrix Server Nginx Config
+cat > /etc/nginx/sites-available/matrix << 'EOL'
+server {
+    server_name go.cavenx.com;
+
+    location /.well-known/matrix/server {
+        default_type application/json;
+        return 200 '{"m.server": "go.cavenx.com:443"}';
+    }
+
+    location /.well-known/matrix/client {
+        default_type application/json;
+        add_header Access-Control-Allow-Origin *;
+        return 200 '{"m.homeserver": {"base_url": "https://go.cavenx.com"}}';
+    }
+
+    location ~ ^(/_matrix|/_synapse/client) {
+        proxy_pass http://localhost:6167;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        client_max_body_size 50M;
+        proxy_http_version 1.1;
+    }
+
+    listen 443 ssl;
+    ssl_certificate /etc/letsencrypt/live/go.cavenx.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/go.cavenx.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+}
+
+server {
+    if ($host = go.cavenx.com) {
+        return 301 https://$host$request_uri;
+    }
+
+    listen 80;
+    server_name go.cavenx.com;
+    return 404;
+}
+EOL
+
+# Enable sites
+ln -s /etc/nginx/sites-available/element /etc/nginx/sites-enabled/
+ln -s /etc/nginx/sites-available/matrix /etc/nginx/sites-enabled/
+
+# Set permissions
+chown -R www-data:www-data /var/www/element
+chmod -R 755 /var/www/element
+
+# ===============================
+# SSL Certificates (Manual Steps)
+# ===============================
+echo "
+Manual Steps Required:
+1. Run these commands for SSL:
+   certbot --nginx -d go.cavenx.com
+   certbot --nginx -d chat.go.cavenx.com
+
+2. Start and enable services:
+   systemctl daemon-reload
+   systemctl enable conduit
+   systemctl start conduit
+   systemctl enable nginx
+   systemctl restart nginx
+
+3. Create first user:
+   curl -X POST https://go.cavenx.com/_matrix/client/v3/admin/register/new \
+        -H 'Content-Type: application/json' \
+        -d '{\"username\":\"admin\",\"password\":\"yourpassword\",\"admin\":true}'
+"
+
+# Make script executable
+chmod +x /home/ubuntu/matrix_conduit_element_setup_chat.sh
+
+
+
+
+
+
+
+
+
+# This script includes:
+# 1. All necessary package installations
+# Conduit setup and configuration
+# Element Web setup and configuration
+# Nginx configurations for both services
+# Required permissions and symbolic links
+# Manual steps for SSL certificates and service startup
+# To use this on a new EC2 instance:
+# Copy this script to the new instance
+# Make it executable: chmod +x matrix_conduit_element_setup_chat.sh
+# Run it as root: sudo ./matrix_conduit_element_setup_chat.sh
+# Follow the manual steps printed at the end
+# Note: Make sure to:
+# Update domain names if they change
+# Update LiveKit configuration if the server changes
+# Backup the database if migrating an existing installation
